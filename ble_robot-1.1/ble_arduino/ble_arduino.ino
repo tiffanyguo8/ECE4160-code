@@ -14,6 +14,7 @@
 // --------------------------------------------------------- Motor/Driver -----------------------------------------------------------
 #include "motor.h"
 #include "ble.h"
+#include "kalman.h"
 // ----------------------------------------------------------- Bluetooth -----------------------------------------------------------
 //////////// BLE UUIDs ////////////
 #define BLE_UUID_TEST_SERVICE "014f74b1-658c-430c-be32-b3c35d648b16"
@@ -52,7 +53,7 @@ int count = 0;
 #define SHUTDOWN_PIN 8
 #define INTERRUPT_PIN 3
 #define TOF_ARR_LEN 1000
-#define IMU_ARR_LEN 5000
+#define IMU_ARR_LEN 10000
 
 // Shutdown and interrupt pins.
 SFEVL53L1X distanceSensor1(Wire, SHUTDOWN_PIN, INTERRUPT_PIN);
@@ -74,6 +75,7 @@ double pitch_a_LPF[] = {0, 0};
 const int n =1;
 static int imu_duration = 0;
 int ble_flag = 0;
+int pid_flag = 0;
 
 void setup()
 {
@@ -146,14 +148,11 @@ void setup()
       ;
   }
   
-  distanceSensor1.setDistanceModeShort();
-  distanceSensor2.setDistanceModeShort();
+  // distanceSensor1.setDistanceModeShort();
+  // distanceSensor2.setDistanceModeShort();
     
     distanceSensor1.startRanging(); //Write configuration bytes to initiate measurement
       distanceSensor2.startRanging(); //Write configuration bytes to initiate measurement
-    
-    // distanceSensor1.setProxIntegrationTime(4);
-    // distanceSensor2.setProxIntegrationTime(4);
 
 // ---------------------------------------------------------- IMU Sensor -----------------------------------------------------------
   Wire.setClock(400000);
@@ -202,16 +201,15 @@ void write_data()
             tx_float_value = 0;
             
         }
-
         previousMillis = currentMillis;
     }
 }
 
-void read_data(int* flag)
+void read_data(int* ble_flag, int* pid_flag)
 {
     // Query if the characteristic value has been written by another BLE device
     if (rx_characteristic_string.written()) {
-        handle_command(robot_cmd, rx_characteristic_string, tx_characteristic_string, flag);
+        handle_command(robot_cmd, rx_characteristic_string, tx_characteristic_string, ble_flag, pid_flag);
     }
 }
 
@@ -219,6 +217,9 @@ int tof_data1[TOF_ARR_LEN];
 int tof_data2[TOF_ARR_LEN];
 int tof_times1[TOF_ARR_LEN];
 int tof_times2[TOF_ARR_LEN];
+int imu_data[TOF_ARR_LEN];
+int kf_times[TOF_ARR_LEN*2];
+int kf_counter = 0;
 int tof_counter1 = 0;
 int tof_counter2 = 0;
 
@@ -234,17 +235,25 @@ int speed_counter = 0;
 
 bool tof1_overflow = false;
 bool tof2_overflow = false;
+bool kf_overflow = false;
 bool imu_overflow = false;
 bool speed_overflow = false;
 
 unsigned long last_time = millis();
+unsigned long begin_time = millis();
 
 int speed = 150;
-int pid_error = 0;
-int setpoint = 400; //304; //304 mm
+float pid_error = 0;
+float pid_accum = 0;
+float pid_prev_error = 0;
+int setpoint = 400; //304 mm but i changed it to 400 idk
 int curr_dist = 0;
+int curr_gyr = 0;
 int prev_error = 0;
 int accumulator = 0;
+Matrix<2,1> kalman_dist = 0;
+
+int stopped = 0;
 
 void loop()
 {
@@ -257,6 +266,7 @@ void loop()
         Serial.println(central.address());
         
         last_time = millis(); // for IMU
+        begin_time = millis();
 
 // ------------------------------------------------- While loop ------------------------------------------------- 
         // While central is connected
@@ -265,12 +275,8 @@ void loop()
             write_data();
 
             // Read data
-            read_data(&ble_flag);
+            read_data(&ble_flag, &pid_flag);
             
-          // distanceSensor1.startRanging(); //Write configuration bytes to initiate measurement
-          // distanceSensor2.startRanging(); //Write configuration bytes to initiate measurement
-        // Serial.println(tof_counter1);
-
             if(distanceSensor1.checkForDataReady())
             {
                 if(tof_counter1 < TOF_ARR_LEN)
@@ -280,21 +286,32 @@ void loop()
                     curr_dist = distance1;
                     tof_times1[tof_counter1] = millis();
                     speed_data[tof_counter1] = speed;
+                    imu_data[tof_counter1] = yaw;
                     distanceSensor1.clearInterrupt();
-                    //distanceSensor1.stopRanging();
                     tof_counter1 ++;
                 }
                 else tof1_overflow = true;
+                
+                // Extrapolation
+                // if(tof_counter1 > 0)
+                // {
+                //     int pred_velocity = (tof_data1[tof_counter1-1] - tof_data1[tof_counter1-2])/(tof_times1[tof_counter1-1] - tof_times1[tof_counter1-2]);
+                //     int pred_dist = tof_data1[tof_counter1-1] + pred_velocity * (int(millis())-tof_times1[tof_counter1-1]);
+                //     tof_counter1++;
+                //     tof_data1[tof_counter1] = pred_dist;
+                //     curr_dist = pred_dist;
+                //     // Serial.println(pred_dist);
+                //     tof_times1[tof_counter1] = millis();
+                // }
             }
             if(distanceSensor2.checkForDataReady())
             {
-                if(tof_counter1 < TOF_ARR_LEN)
+                if(tof_counter2 < TOF_ARR_LEN)
                 {
                     int distance2 = distanceSensor2.getDistance(); //Get the result of the measurement from the sensor
                     tof_data2[tof_counter2] = distance2;
                     tof_times2[tof_counter2] = millis();
                     distanceSensor2.clearInterrupt();
-                    //distanceSensor2.stopRanging();
                     tof_counter2 ++;
                 }
                 else tof2_overflow = true;
@@ -305,7 +322,6 @@ void loop()
               if(imu_counter < IMU_ARR_LEN)
               {
                 myICM.getAGMT();
-                imu_times[imu_counter] = millis();
 
                 pitch_a = atan2(myICM.accY(),myICM.accZ())*180/M_PI; 
                 roll_a  = atan2(myICM.accX(),myICM.accZ())*180/M_PI; 
@@ -315,36 +331,123 @@ void loop()
                 pitch_g = pitch_g + myICM.gyrX()*dt;
                 roll_g = roll_g + myICM.gyrY()*dt;
                 yaw_g = yaw_g + myICM.gyrZ()*dt;
+                curr_gyr = myICM.gyrZ();
+                // Serial.print("\tIMU time: ");
 
                 pitch = (pitch+myICM.gyrX()*dt)*0.9 + pitch_a*0.1;
                 roll = (roll+myICM.gyrY()*dt)*0.9 + roll_a*0.1;
                 yaw = (yaw+myICM.gyrZ()*dt);
+                Serial.println(yaw);
                 imu_pitch[imu_counter] = pitch;
                 imu_roll[imu_counter] = roll;
                 imu_yaw[imu_counter] = yaw;
+                imu_times[imu_counter] = millis();
                 imu_counter ++;
               }
               else imu_overflow = true;
           }
             
+        // For debugging hard fault (isdk why it happens)
+        // Serial.print("TOF1: ");
+        // Serial.print(tof_counter1);
+        // Serial.print("\tTOF2: ");
+        // Serial.println(tof_counter2);
+            
+     /**
         // PID
-        if(tof_counter1 > 0) // Make sure we have at least 1 sensor reading
+        if(pid_flag)
         {
-            // Error: Distance from wall - 1ft/304mm
+            if(tof_counter1 > 0) // Make sure we have at least 1 sensor reading
+            {
+                // Error: Distance from wall - 1ft/304mm
+                kalman_dist = kf(curr_dist, speed);
+                if(kf_counter < TOF_ARR_LEN*2)
+                {
+                    kf_data[kf_counter] = kalman_dist(0,0);
+                    kf_times[kf_counter] = millis();
+                    kf_counter++;
+                }
+                else kf_overflow = true;
+                //pid_error = curr_dist - setpoint;
+                pid_error = -1*kalman_dist(0,0) - setpoint;
+                speed = pid(speed, pid_error, prev_error, accumulator);
+                prev_error = pid_error;
+                accumulator += pid_error;
+
+                if(speed == 0) stop();
+                else if(speed > 0) forward(speed);
+                else backward(-1*speed);
+                // Serial.print(speed);
+                // Serial.print("\t");
+                // Serial.println(kalman_dist(0,0));
+                // Serial.print("\t");
+                // Serial.println(pid_error);
+            }
+        }
+      */
+    /**    
+        // Flip
+        if(pid_flag)
+        {
+            if(stopped)
+                stop();
+            else if(tof_counter1 > 0) // Make sure we have at least 1 sensor reading
+            {
+                kalman_dist = kf(curr_dist, speed);
+                if(kf_counter < TOF_ARR_LEN*2)
+                {
+                    kf_data[kf_counter] = kalman_dist(0,0);
+                    kf_times[kf_counter] = millis();
+                    kf_counter++;
+                }
+                else kf_overflow = true;
+                
+                Serial.println(kalman_dist(0,0));
+                
+                if(abs(kalman_dist(0,0)) > 1500)
+                // if(abs(curr_dist) > 1500)
+                {
+                    forward(255);
+                }
+                else
+                {
+                    backward(255);
+                    delay(2000);
+                    stop();
+                    stopped = 1;
+                }
+                
+                // Serial.print(speed);
+                // Serial.print("\t");
+                // Serial.println(kalman_dist(0,0));
+                // Serial.print("\t");
+                // Serial.println(pid_error);
+            }
+        }
+    */
             
-            pid_error = curr_dist - setpoint;
-            speed = pid(speed, pid_error, prev_error, accumulator);
-            prev_error = pid_error;
-            accumulator += pid_error;
-            
-            if(speed == 0) stop();
-            else if(speed > 0) forward(speed);
-            else backward(-1*speed);
-            // Serial.print(speed);
-            // Serial.print("\t");
-            // Serial.println(curr_dist);
-            // Serial.print("\t");
-            // Serial.println(pid_error);
+        // Mapping
+        if(pid_flag)
+        {
+            if(imu_counter > 0) // Make sure we have at least 1 sensor reading
+            {
+                int gyr_setpoint = 15; // setpoint = 15 degrees/s
+                float Kp = -3.5;
+                float Ki = -0.25;
+                pid_error = curr_gyr - gyr_setpoint;
+                int d_e = pid_error - pid_prev_error;
+                pid_accum += pid_error*0.01;
+                speed = Kp*pid_error + Ki*pid_accum;
+                pid_prev_error = pid_error;
+                
+                // Set upper and lower bounds for speed
+                if(speed > 255) speed = 255;
+                else if(speed > 0 && speed < 40) speed = 40;
+                else if(speed < 0) speed = 0;
+                
+                left(speed);
+                if(yaw > (imu_yaw[0] + 360)) pid_flag = 0;
+            }
         }
             
         if(ble_flag)
@@ -357,10 +460,28 @@ void loop()
                 tx_estring_value.append(",");
                 tx_estring_value.append(tof_data1[i]);
                 tx_estring_value.append(",");
-                tx_estring_value.append(speed_data[i]);
+                tx_estring_value.append(imu_data[i]);
+                // if(kf_counter >= i)
+                // {
+                //     tx_estring_value.append(",");
+                //     tx_estring_value.append(kf_data[i]);
+                // }
                 tx_estring_value.append(")");
                 tx_characteristic_string.writeValue(tx_estring_value.c_str());
             }
+            // tx_estring_value.clear();
+            // tx_estring_value.append("|Now writing Gyroscope Yaw data|");
+            // tx_characteristic_string.writeValue(tx_estring_value.c_str());
+            // for(int i = 0; i < imu_counter; i++)
+            // {
+            //     tx_estring_value.clear();
+            //     tx_estring_value.append("(");
+            //     tx_estring_value.append(imu_times[i]);
+            //     tx_estring_value.append(",");
+            //     tx_estring_value.append(imu_yaw[i]);
+            //     tx_estring_value.append(")");
+            //     tx_characteristic_string.writeValue(tx_estring_value.c_str());
+            // }
             ble_flag = 0;
         }
             
@@ -394,17 +515,17 @@ void loop()
         tof_counter1 = 0;
         tof_counter2 = 0;
             
-        // Serial.println(imu_counter);
-        // for(int i = 0; i < imu_counter; i++)
-        // {
-        //     Serial.print(imu_times[i]);
-        //     Serial.print('\t');
-        //     Serial.print(imu_pitch[i]);
-        //     Serial.print('\t');
-        //     Serial.print(imu_roll[i]);
-        //     Serial.print('\t');
-        //     Serial.println(imu_yaw[i]);
-        // }
+        Serial.println(imu_counter);
+        for(int i = 0; i < imu_counter; i++)
+        {
+            Serial.print(imu_times[i]);
+            Serial.print('\t');
+            Serial.print(imu_pitch[i]);
+            Serial.print('\t');
+            Serial.print(imu_roll[i]);
+            Serial.print('\t');
+            Serial.println(imu_yaw[i]);
+        }
         
         imu_counter = 0;
     }

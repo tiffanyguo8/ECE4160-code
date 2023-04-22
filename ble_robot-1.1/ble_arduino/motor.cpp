@@ -16,14 +16,29 @@ void forward(int pwm) {
   analogWrite(7, 0); 
   analogWrite(12, 0);
   analogWrite(6, pwm);
-  analogWrite(13, pwm-15); 
+  analogWrite(13, pwm-25); 
 }
 
 void backward(int pwm) {
+  analogWrite(13, 0); 
+  analogWrite(12, pwm);
+  // delay(80);
   analogWrite(6, 0);
   analogWrite(7, pwm); 
-  analogWrite(12, pwm-15);
+}
+
+void left(int pwm) {
+  analogWrite(13, pwm); 
+  analogWrite(12, 0);
+  analogWrite(6, 0);
+  analogWrite(7, pwm); 
+}
+
+void right(int pwm) {
   analogWrite(13, 0); 
+  analogWrite(12, pwm);
+  analogWrite(6, pwm);
+  analogWrite(7, 0); 
 }
 
 void stop() {

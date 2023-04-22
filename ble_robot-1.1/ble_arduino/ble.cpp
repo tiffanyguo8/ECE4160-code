@@ -1,6 +1,6 @@
 #include "ble.h"
 
-void handle_command(RobotCommand robot_cmd, BLECStringCharacteristic rx_characteristic_string, BLECStringCharacteristic tx_characteristic_string, int* flag)
+void handle_command(RobotCommand robot_cmd, BLECStringCharacteristic rx_characteristic_string, BLECStringCharacteristic tx_characteristic_string, int* ble_flag, int* pid_flag)
 {
     EString tx_estring_value;
     
@@ -407,16 +407,20 @@ void handle_command(RobotCommand robot_cmd, BLECStringCharacteristic rx_characte
 
             switch(direction){
               case 'F':
-                    Serial.println("Goingn forward");
+                    Serial.println("Going forward");
                   forward(pwm);
                   break;
               case 'B':
-                    Serial.println("Goingn backward");
+                    Serial.println("Going backward");
                   backward(pwm);
                   break;
               case 'L':
+                    Serial.println("Turning left");
+                  left(pwm);
                   break; // TODO
               case 'R':
+                    Serial.println("Turning right");
+                  right(pwm);
                   break; // TODO
               case 'S':
                     Serial.println("Stopping");
@@ -431,13 +435,15 @@ void handle_command(RobotCommand robot_cmd, BLECStringCharacteristic rx_characte
 
             break;
             
-        // case PID:
-        //     Serial.println("Performing PID - drive to 1 ft of wall and stop. ");
-        //     pid();
-        //     break;
+        case PID:
+            Serial.println("Performing PID - drive to 1 ft of wall and stop. ");
+            temp = robot_cmd.get_next_value(cmd_input);
+            Serial.println(temp);
+            *pid_flag = 1;
+            break;
             
         case SEND_DATA:
-            *flag = 1;
+            *ble_flag = 1;
             break;
 
         default:

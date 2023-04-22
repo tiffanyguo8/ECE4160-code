@@ -24,4 +24,4 @@ enum CommandTypes
 
 // void write_data(BLEFloatCharacteristic tx_characteristic_float);
 // void read_data(BLECStringCharacteristic rx_characteristic_string, RobotCommand robot_cmd, BLECStringCharacteristic tx_characteristic_string);
-void handle_command(RobotCommand robot_cmd, BLECStringCharacteristic rx_characteristic_string, BLECStringCharacteristic tx_characteristic_string, int* flag);
+void handle_command(RobotCommand robot_cmd, BLECStringCharacteristic rx_characteristic_string, BLECStringCharacteristic tx_characteristic_string, int* ble_flag, int* pid_flag);
