@@ -148,8 +148,8 @@ void setup()
       ;
   }
   
-  // distanceSensor1.setDistanceModeShort();
-  // distanceSensor2.setDistanceModeShort();
+//   distanceSensor1.setDistanceModeShort();
+//   distanceSensor2.setDistanceModeShort();
     
     distanceSensor1.startRanging(); //Write configuration bytes to initiate measurement
       distanceSensor2.startRanging(); //Write configuration bytes to initiate measurement
@@ -252,8 +252,39 @@ int curr_gyr = 0;
 int prev_error = 0;
 int accumulator = 0;
 Matrix<2,1> kalman_dist = 0;
+int prev_yaw = 0;
+int data_counter = 0;
+int yaw_flag = 0;
 
 int stopped = 0;
+
+// Turn to a target angle. Uses global integral accumulator variable, so be careful!
+// When finished, reset pid_prev_error
+void ang_pid(int angle)
+{
+    while(angle > yaw+3 || yaw < yaw - 3)
+    {
+        if(imu_counter > 0) // Make sure we have at least 1 sensor reading
+        {
+            int yaw_setpoint = angle; // setpoint = 15 degrees/s
+            float Kp = -3.5;
+            float Ki = -0.25;
+            pid_error = yaw - yaw_setpoint;
+            int d_e = pid_error - pid_prev_error;
+            pid_accum += pid_error*0.01;
+            speed = Kp*pid_error + Ki*pid_accum;
+            pid_prev_error = pid_error;
+
+            // Set upper and lower bounds for speed
+            if(speed > 255) speed = 255;
+            else if(speed > 0 && speed < 40) speed = 40;
+            else if(speed < 0) speed = 0;
+
+            left(speed);
+        }
+    }
+    pid_prev_error = 0;
+}
 
 void loop()
 {
@@ -282,13 +313,25 @@ void loop()
                 if(tof_counter1 < TOF_ARR_LEN)
                 {
                     int distance1 = distanceSensor1.getDistance(); //Get the result of the measurement from the sensor
-                    tof_data1[tof_counter1] = distance1;
                     curr_dist = distance1;
+                    
+                    tof_data1[tof_counter1] = distance1;
                     tof_times1[tof_counter1] = millis();
-                    speed_data[tof_counter1] = speed;
                     imu_data[tof_counter1] = yaw;
+                    tof_counter1++;
+                    
+                    // if(yaw >= prev_yaw + 20 && data_counter < 18 && yaw_flag)
+                    // {
+                    //     tof_data1[tof_counter1] = distance1;
+                    //     tof_times1[tof_counter1] = millis();
+                    //     imu_data[tof_counter1] = yaw;
+                    //     data_counter++;
+                    //     prev_yaw = yaw;
+                    //     tof_counter1 ++;
+                    // }
+                    
+                    // speed_data[tof_counter1] = speed;
                     distanceSensor1.clearInterrupt();
-                    tof_counter1 ++;
                 }
                 else tof1_overflow = true;
                 
@@ -337,6 +380,11 @@ void loop()
                 pitch = (pitch+myICM.gyrX()*dt)*0.9 + pitch_a*0.1;
                 roll = (roll+myICM.gyrY()*dt)*0.9 + roll_a*0.1;
                 yaw = (yaw+myICM.gyrZ()*dt);
+                if(!yaw_flag)
+                {
+                    prev_yaw = yaw;
+                    yaw_flag = 1;
+                }
                 Serial.println(yaw);
                 imu_pitch[imu_counter] = pitch;
                 imu_roll[imu_counter] = roll;
@@ -446,7 +494,11 @@ void loop()
                 else if(speed < 0) speed = 0;
                 
                 left(speed);
-                if(yaw > (imu_yaw[0] + 360)) pid_flag = 0;
+                if(yaw > (imu_yaw[0] + 360)) 
+                {
+                    pid_flag = 0;
+                    stop();
+                }
             }
         }
             

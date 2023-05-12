@@ -31,7 +31,7 @@ void left(int pwm) {
   analogWrite(13, pwm); 
   analogWrite(12, 0);
   analogWrite(6, 0);
-  analogWrite(7, pwm); 
+  analogWrite(7, pwm+20); 
 }
 
 void right(int pwm) {

@@ -417,11 +417,11 @@ void handle_command(RobotCommand robot_cmd, BLECStringCharacteristic rx_characte
               case 'L':
                     Serial.println("Turning left");
                   left(pwm);
-                  break; // TODO
+                  break;
               case 'R':
                     Serial.println("Turning right");
                   right(pwm);
-                  break; // TODO
+                  break;
               case 'S':
                     Serial.println("Stopping");
                   stop();
