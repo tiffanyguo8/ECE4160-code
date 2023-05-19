@@ -125,7 +125,6 @@ void setup()
     BLE.advertise();
 
 // ---------------------------------------------------------- TOF Sensor -----------------------------------------------------------
-
   Wire.begin();
 
   Serial.println("VL53L1X Qwiic Test");
@@ -254,36 +253,26 @@ int accumulator = 0;
 Matrix<2,1> kalman_dist = 0;
 int prev_yaw = 0;
 int data_counter = 0;
-int yaw_flag = 0;
+// int yaw_flag = 0;
+
+int state = 0;
+int state_change_flag = 0;
+int begin_angle = 0;
 
 int stopped = 0;
 
-// Turn to a target angle. Uses global integral accumulator variable, so be careful!
-// When finished, reset pid_prev_error
-void ang_pid(int angle)
+// Turn an angle
+void angle_turn(int begin_angle, int angle)
 {
-    while(angle > yaw+3 || yaw < yaw - 3)
-    {
-        if(imu_counter > 0) // Make sure we have at least 1 sensor reading
+        if(yaw < begin_angle + angle)
         {
-            int yaw_setpoint = angle; // setpoint = 15 degrees/s
-            float Kp = -3.5;
-            float Ki = -0.25;
-            pid_error = yaw - yaw_setpoint;
-            int d_e = pid_error - pid_prev_error;
-            pid_accum += pid_error*0.01;
-            speed = Kp*pid_error + Ki*pid_accum;
-            pid_prev_error = pid_error;
-
-            // Set upper and lower bounds for speed
-            if(speed > 255) speed = 255;
-            else if(speed > 0 && speed < 40) speed = 40;
-            else if(speed < 0) speed = 0;
-
-            left(speed);
+            left(90);
         }
-    }
-    pid_prev_error = 0;
+        else
+        {
+            stop();
+            state_change_flag = 1;
+        }
 }
 
 void loop()
@@ -380,11 +369,11 @@ void loop()
                 pitch = (pitch+myICM.gyrX()*dt)*0.9 + pitch_a*0.1;
                 roll = (roll+myICM.gyrY()*dt)*0.9 + roll_a*0.1;
                 yaw = (yaw+myICM.gyrZ()*dt);
-                if(!yaw_flag)
-                {
-                    prev_yaw = yaw;
-                    yaw_flag = 1;
-                }
+                // if(!yaw_flag)
+                // {
+                //     prev_yaw = yaw;
+                //     yaw_flag = 1;
+                // }
                 Serial.println(yaw);
                 imu_pitch[imu_counter] = pitch;
                 imu_roll[imu_counter] = roll;
@@ -402,7 +391,7 @@ void loop()
         // Serial.println(tof_counter2);
             
      /**
-        // PID
+        // PID going forward
         if(pid_flag)
         {
             if(tof_counter1 > 0) // Make sure we have at least 1 sensor reading
@@ -473,7 +462,7 @@ void loop()
             }
         }
     */
-            
+    /**   
         // Mapping
         if(pid_flag)
         {
@@ -501,7 +490,96 @@ void loop()
                 }
             }
         }
+    */
+            switch(state)
+            {
+                case 0:
+                    forward(80);
+                    delay(1000);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                case 1:
+                    angle_turn(begin_angle, 308);
+                    break;
+                case 2:
+                    forward(75);
+                    delay(1450);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                case 3:
+                    angle_turn(begin_angle, 285);
+                    break;
+                case 4:
+                    forward(80);
+                    delay(1000);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                case 5:
+                    angle_turn(begin_angle, 65);
+                    break;
+                case 6:
+                    forward(80);
+                    delay(1400);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                case 7:
+                    angle_turn(begin_angle, 87);
+                    break;
+                case 8:
+                    forward(80);
+                    delay(750);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                case 9:
+                    forward(80);
+                    delay(1800);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                case 10:
+                    angle_turn(begin_angle, 95);
+                    break;
+                case 11:
+                    forward(80);
+                    delay(1600);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                case 12:
+                    angle_turn(begin_angle, 95);
+                    break;
+                case 13:
+                    forward(80);
+                    delay(1000);
+                    stop();
+                    delay(1000);
+                    state_change_flag = 1;
+                    break;
+                default:
+                    Serial.println("Done or Not a valid state.");
+                    stop();
+                    break;
+            }
+            if(state_change_flag)
+            {
+                begin_angle = yaw;
+                state++;
+                state_change_flag = 0;
+            }
             
+        // Sending data to laptop
         if(ble_flag)
         {
             for(int i = 0; i < tof_counter1; i++)
